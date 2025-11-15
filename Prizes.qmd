@@ -1,0 +1,327 @@
+---
+title: "Selected British Literary Prizes"
+format: html
+editor: visual
+---
+
+```{r}
+library(shiny)
+library(shinythemes)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(DT) # For interactive tables
+
+# --- 1. Load and Prepare Data ---
+# Load the dataset directly from the URL.
+data_url <- "https://raw.githubusercontent.com/Post45-Data-Collective/data/refs/heads/main/british_literary_prizes/british_literary_prizes-1990-2022.csv"
+prizes_df_raw <- readr::read_csv(data_url, show_col_types = FALSE)
+
+# --- 1b. Clean and Rename Columns ---
+# The CSV has complex names. We'll rename them for easier use.
+# This is the main fix for all column errors.
+prizes_df <- prizes_df_raw %>%
+  dplyr::rename(
+    Prize = prize_name,
+    Year = prize_year,
+    Author = name # Correct mapping based on user's list
+    # 'publisher' column does not exist in the data
+  )
+
+# --- 1c. Prepare Filters ---
+# Now we use the simple, renamed column names
+unique_prizes <- sort(unique(na.omit(prizes_df$Prize)))
+unique_authors <- sort(unique(na.omit(prizes_df$Author)))
+# No publisher filter
+
+min_year <- min(prizes_df$Year, na.rm = TRUE)
+max_year <- max(prizes_df$Year, na.rm = TRUE)
+
+
+# --- 2. Define User Interface (UI) ---
+# The rest of the UI uses the simple names (Year, Prize, etc.)
+ui <- navbarPage(
+  title = "British Literary Prizes (1990-2022)",
+  theme = shinytheme("flatly"),
+
+  # --- Tab 1: Data Explorer ---
+  tabPanel(
+    "Data Explorer",
+    icon = icon("table"),
+    sidebarLayout(
+      # Sidebar with filters
+      sidebarPanel(
+        width = 3,
+        h4("Filter Data"),
+        
+        # Filter by Year Range
+        sliderInput(
+          "year_slider_explore",
+          "Year Range:",
+          min = min_year,
+          max = max_year,
+          value = c(min_year, max_year),
+          sep = ""
+        ),
+        
+        # Filter by Prize
+        selectizeInput(
+          "prize_filter_explore",
+          "Prize Name (Select one or more):",
+          choices = unique_prizes,
+          multiple = TRUE
+        ),
+        
+        # Filter by Author
+        selectizeInput(
+          "author_filter_explore",
+          "Author (Select one or more):",
+          choices = unique_authors,
+          multiple = TRUE
+        )
+        
+      ),
+      
+      # Main panel with the interactive table
+      mainPanel(
+        width = 9,
+        h3("Filtered Prize Data"),
+        p("Use the filters on the left to explore the dataset. You can sort columns and search using the boxes below."),
+        hr(),
+        DT::dataTableOutput("main_table")
+      )
+    )
+  ),
+  
+  # --- Tab 2: Winners Over Time ---
+  tabPanel(
+    "Winners Over Time",
+    icon = icon("chart-line"),
+    sidebarLayout(
+      # Sidebar with filters
+      sidebarPanel(
+        width = 3,
+        h4("Filters"),
+        
+        # Filter by Year Range
+        sliderInput(
+          "year_slider_time",
+          "Year Range:",
+          min = min_year,
+          max = max_year,
+          value = c(min_year, max_year),
+          sep = ""
+        ),
+        
+        # Filter by Prize
+        selectizeInput(
+          "prize_filter_time",
+          "Prize Name (Select one or more):",
+          choices = unique_prizes,
+          multiple = TRUE,
+          # Select a few common prizes by default
+          selected = c("Booker Prize", "Women's Prize for Fiction") 
+        )
+      ),
+      
+      # Main panel with the plot
+      mainPanel(
+        width = 9,
+        h3("Prize Winners Per Year"),
+        p("This chart shows the total number of winners for the selected prizes each year."),
+        hr(),
+        plotOutput("time_plot")
+      )
+    )
+  ),
+  
+  # --- Tab 3: Top Winners ---
+  tabPanel(
+    "Top Winners",
+    icon = icon("trophy"),
+    sidebarLayout(
+      # Sidebar with filters
+      sidebarPanel(
+        width = 3,
+        h4("Filters"),
+        
+        # Filter by Year Range
+        sliderInput(
+          "year_slider_top",
+          "Year Range:",
+          min = min_year,
+          max = max_year,
+          value = c(min_year, max_year),
+          sep = ""
+        ),
+        
+        # Filter by Prize (optional)
+        selectizeInput(
+          "prize_filter_top",
+          "Filter by Prize (Optional):",
+          choices = c("All Prizes" = "", unique_prizes),
+          multiple = TRUE
+        ),
+        
+        # Select Top N
+        numericInput(
+          "top_n_filter",
+          "Show Top N Winners:",
+          value = 10,
+          min = 3,
+          max = 30
+        )
+      ),
+      
+      # Main panel with one plot
+      mainPanel(
+        width = 9,
+        fluidRow(
+          # Top Authors Plot (now full width)
+          column(
+            12,
+            h3(textOutput("top_authors_title")),
+            p("Authors with the most wins in the selected period/prizes."),
+            hr(),
+            plotOutput("top_authors_plot")
+          )
+        )
+      )
+    )
+  )
+)
+
+
+# --- 3. Define Server Logic ---
+# All server logic now uses the simple names (Year, Prize, Author)
+server <- function(input, output, session) {
+  
+  # --- Tab 1: Data Explorer Logic ---
+  
+  # Reactive expression to filter data for the explorer tab
+  filtered_data_explore <- reactive({
+    data <- prizes_df
+    
+    # Apply year filter
+    data <- data %>%
+      filter(Year >= input$year_slider_explore[1] & Year <= input$year_slider_explore[2])
+    
+    # Apply prize filter (if any are selected)
+    if (length(input$prize_filter_explore) > 0) {
+      data <- data %>% filter(Prize %in% input$prize_filter_explore)
+    }
+    
+    # Apply author filter (if any are selected)
+    if (length(input$author_filter_explore) > 0) {
+      data <- data %>% filter(Author %in% input$author_filter_explore)
+    }
+    
+    # Removed publisher filter logic
+    
+    return(data)
+  })
+  
+  # Render the interactive table
+  output$main_table <- DT::renderDataTable({
+    DT::datatable(
+      filtered_data_explore(),
+      options = list(
+        pageLength = 10,
+        scrollX = TRUE # Allow horizontal scrolling for wide table
+      ),
+      rownames = FALSE,
+      filter = 'top' # Add column-level filters
+    )
+  })
+  
+  # --- Tab 2: Winners Over Time Logic ---
+  
+  # Reactive expression to filter and summarize data for the time plot
+  filtered_data_time <- reactive({
+    data <- prizes_df
+    
+    # Apply year filter
+    data <- data %>%
+      filter(Year >= input$year_slider_time[1] & Year <= input$year_slider_time[2])
+    
+    # Apply prize filter (if any are selected)
+    # If no prizes are selected, show an empty state
+    validate(
+      need(length(input$prize_filter_time) > 0, "Please select at least one prize to display the chart.")
+    )
+    data <- data %>% filter(Prize %in% input$prize_filter_time)
+    
+    # Group by year and prize, then count winners
+    data_summary <- data %>%
+      group_by(Year, Prize) %>%
+      summarise(Count = n(), .groups = 'drop')
+      
+    return(data_summary)
+  })
+  
+  # Render the time plot
+  output$time_plot <- renderPlot({
+    ggplot(filtered_data_time(), aes(x = Year, y = Count, color = Prize, group = Prize)) +
+      geom_line(linewidth = 1) +
+      geom_point(size = 2) +
+      labs(
+        title = "Annual Prize Winners",
+        x = "Year",
+        y = "Number of Winners",
+        color = "Prize"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(legend.position = "bottom") +
+      scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) # Prettier X-axis labels
+  })
+  
+  # --- Tab 3: Top Winners Logic ---
+  
+  # Reactive expression for the base data for Top Winners
+  filtered_data_top <- reactive({
+    data <- prizes_df
+    
+    # Apply year filter
+    data <- data %>%
+      filter(Year >= input$year_slider_top[1] & Year <= input$year_slider_top[2])
+    
+    # Apply prize filter (if any are selected)
+    if (length(input$prize_filter_top) > 0) {
+      data <- data %>% filter(Prize %in% input$prize_filter_top)
+    }
+    
+    return(data)
+  })
+  
+  # Dynamic titles for Top N plots
+  output$top_authors_title <- renderText({
+    paste("Top", input$top_n_filter, "Authors")
+  })
+  
+  
+  # Render Top Authors plot
+  output$top_authors_plot <- renderPlot({
+    # Process data to get top authors
+    top_authors <- filtered_data_top() %>%
+      filter(!is.na(Author)) %>% # Exclude NA authors
+      group_by(Author) %>%
+      summarise(Wins = n(), .groups = 'drop') %>%
+      arrange(desc(Wins)) %>%
+      slice_head(n = input$top_n_filter)
+      
+    # Plot
+    ggplot(top_authors, aes(x = reorder(Author, Wins), y = Wins)) +
+      geom_col(fill = "#0072B2") +
+      coord_flip() + # Flip coordinates for horizontal bar chart
+      labs(
+        x = "Author",
+        y = "Number of Wins"
+      ) +
+      theme_minimal(base_size = 14)
+  })
+  
+}
+
+# --- 4. Run the Application ---
+shinyApp(ui = ui, server = server)
+```
